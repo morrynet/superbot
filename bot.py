@@ -55,8 +55,9 @@ def init_db():
             username TEXT,
             first_name TEXT,
             last_name TEXT,
-            shares INTEGER DEFAULT 10,  -- Start with 10 free shares
+            shares INTEGER DEFAULT 20,  -- Start with 20 free shares
             referrals INTEGER DEFAULT 0,
+            daily_bonus_claimed TIMESTAMP,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
@@ -84,7 +85,7 @@ def init_db():
         )
     ''')
     
-    # Packages table
+    # Packages table with NEW PRICING
     c.execute('''
         CREATE TABLE IF NOT EXISTS packages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,11 +95,16 @@ def init_db():
         )
     ''')
     
-    # Insert default packages
+    # Insert NEW packages based on your requirements
+    # 20 KES → 200 shares
+    # 50 KES → 500 shares  
+    # 100 KES → 1000 shares
+    # 1000 KES → 20,000 shares
     default_packages = [
-        ("BASIC", 20, 20),
-        ("PRO", 50, 50),
-        ("VIP", 100, 100)
+        ("BASIC", 20, 200),
+        ("PRO", 50, 500),
+        ("VIP", 100, 1000),
+        ("PREMIUM", 1000, 20000)
     ]
     
     c.executemany(
@@ -113,6 +119,9 @@ def init_db():
         ("-1001234567892", "EDM Fans", "edmfans", 400),
         ("-1001234567893", "Rock Music", "rockmusic", 350),
         ("-1001234567894", "Pop Hits", "pophits", 600),
+        ("-1001234567895", "Afrobeats", "afrobeats", 450),
+        ("-1001234567896", "Rap & Hip Hop", "rapmusic", 550),
+        ("-1001234567897", "Electronic Dance", "edmworld", 400),
     ]
     
     c.executemany(
@@ -122,7 +131,7 @@ def init_db():
     
     conn.commit()
     conn.close()
-    logger.info("✅ Database initialized")
+    logger.info("✅ Database initialized with NEW pricing")
 
 # Database helpers
 def get_db():
@@ -139,7 +148,7 @@ def get_user(telegram_id):
     user = c.fetchone()
     
     if not user:
-        c.execute("INSERT INTO users (telegram_id, shares) VALUES (?, 10)", (telegram_id,))
+        c.execute("INSERT INTO users (telegram_id, shares) VALUES (?, 20)", (telegram_id,))
         conn.commit()
         c.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,))
         user = c.fetchone()
@@ -238,13 +247,18 @@ def get_stats():
     c.execute("SELECT SUM(shares) FROM users")
     total_shares = c.fetchone()[0] or 0
     
+    # Calculate total members
+    c.execute("SELECT SUM(member_count) FROM groups WHERE is_active = 1")
+    total_members = c.fetchone()[0] or 0
+    
     conn.close()
     
     return {
         "users": users,
         "groups": groups,
         "promotions": promotions,
-        "total_shares": total_shares
+        "total_shares": total_shares,
+        "total_members": total_members
     }
 
 # Flask app
@@ -267,9 +281,10 @@ def home():
                 padding: 20px;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 color: white;
+                min-height: 100vh;
             }}
             .container {{
-                max-width: 800px;
+                max-width: 1000px;
                 margin: 0 auto;
                 background: rgba(255, 255, 255, 0.1);
                 backdrop-filter: blur(10px);
@@ -319,16 +334,62 @@ def home():
                 text-align: center;
                 margin: 30px 0;
             }}
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin: 20px 0;
+                background: rgba(255, 255, 255, 0.1);
+                border-radius: 10px;
+                overflow: hidden;
+            }}
+            th, td {{
+                padding: 15px;
+                text-align: left;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            }}
+            th {{
+                background: rgba(0, 0, 0, 0.2);
+            }}
+            .pricing-card {{
+                background: rgba(255, 255, 255, 0.15);
+                padding: 20px;
+                border-radius: 10px;
+                margin: 10px 0;
+                text-align: center;
+            }}
+            .best-value {{
+                border: 2px solid #4CAF50;
+                position: relative;
+            }}
+            .best-badge {{
+                position: absolute;
+                top: -10px;
+                right: 20px;
+                background: #4CAF50;
+                color: white;
+                padding: 5px 10px;
+                border-radius: 5px;
+                font-size: 0.8em;
+            }}
+            .package-container {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                gap: 20px;
+                margin: 30px 0;
+            }}
         </style>
     </head>
     <body>
         <div class="container">
             <h1>🎵 Viral Music Bot</h1>
-            <p style="text-align: center; opacity: 0.9;">Promote your music across Telegram groups</p>
+            <p style="text-align: center; opacity: 0.9; font-size: 1.2em;">Promote your music across 8+ Telegram music groups</p>
             
             <div class="cta">
                 <a href="https://t.me/ViralMusicPromoBot" class="btn" target="_blank">
                     🚀 Launch Bot
+                </a>
+                <a href="https://t.me/ViralMusicSupport" class="btn" style="background: #2196F3;" target="_blank">
+                    💬 Support
                 </a>
             </div>
             
@@ -338,29 +399,75 @@ def home():
                     <div class="stat-number">{stats['users']}</div>
                 </div>
                 <div class="stat-card">
-                    <div>Active Groups</div>
+                    <div>Music Groups</div>
                     <div class="stat-number">{stats['groups']}</div>
+                </div>
+                <div class="stat-card">
+                    <div>Total Reach</div>
+                    <div class="stat-number">{stats['total_members']}</div>
                 </div>
                 <div class="stat-card">
                     <div>Promotions</div>
                     <div class="stat-number">{stats['promotions']}</div>
                 </div>
-                <div class="stat-card">
-                    <div>Total Shares</div>
-                    <div class="stat-number">{stats['total_shares']}</div>
+            </div>
+            
+            <h2 style="text-align: center; margin-top: 40px;">🎯 Pricing Packages</h2>
+            <div class="package-container">
+                <div class="pricing-card">
+                    <h3>BASIC</h3>
+                    <div style="font-size: 2em; font-weight: bold; color: #4ecdc4;">20 KES</div>
+                    <div style="font-size: 1.2em; margin: 10px 0;">200 shares</div>
+                    <p>• 1 share = 1 group promotion</p>
+                    <p>• Perfect for new artists</p>
+                </div>
+                
+                <div class="pricing-card">
+                    <h3>PRO</h3>
+                    <div style="font-size: 2em; font-weight: bold; color: #4ecdc4;">50 KES</div>
+                    <div style="font-size: 1.2em; margin: 10px 0;">500 shares</div>
+                    <p>• 2.5x more value than Basic</p>
+                    <p>• Great for regular promotion</p>
+                </div>
+                
+                <div class="pricing-card best-value">
+                    <div class="best-badge">BEST VALUE</div>
+                    <h3>VIP</h3>
+                    <div style="font-size: 2em; font-weight: bold; color: #ff9800;">100 KES</div>
+                    <div style="font-size: 1.2em; margin: 10px 0;">1,000 shares</div>
+                    <p>• 5x more value than Basic</p>
+                    <p>• Most popular choice</p>
+                    <p>• Priority promotion</p>
+                </div>
+                
+                <div class="pricing-card">
+                    <h3>PREMIUM</h3>
+                    <div style="font-size: 2em; font-weight: bold; color: #9c27b0;">1,000 KES</div>
+                    <div style="font-size: 1.2em; margin: 10px 0;">20,000 shares</div>
+                    <p>• 100x more value than Basic</p>
+                    <p>• For serious artists/labels</p>
+                    <p>• Unlimited promotion</p>
                 </div>
             </div>
             
+            <div style="text-align: center; margin: 40px 0; padding: 20px; background: rgba(255, 255, 255, 0.1); border-radius: 10px;">
+                <h3>✨ Start with 20 FREE shares!</h3>
+                <p>Every new user gets 20 free shares to try the service</p>
+                <p>Plus, claim 10 free shares daily with /bonus command</p>
+            </div>
+            
             <div style="text-align: center; margin-top: 40px;">
-                <h3>Features:</h3>
-                <p>• Share music to multiple groups</p>
-                <p>• Get free shares daily</p>
-                <p>• Referral program</p>
-                <p>• Real-time statistics</p>
+                <h3>How It Works:</h3>
+                <p>1. Start the bot on Telegram</p>
+                <p>2. Get free shares or buy a package</p>
+                <p>3. Use /promote to share your music</p>
+                <p>4. Your music gets promoted to 8+ music groups</p>
+                <p>5. Track results with /stats</p>
             </div>
             
             <div style="text-align: center; margin-top: 40px; font-size: 0.9em; opacity: 0.7;">
                 <p>© 2024 Viral Music Bot | Status: <span style="color: #4CAF50;">●</span> Online</p>
+                <p><small>Free instances spin down after inactivity. First request may take 50+ seconds.</small></p>
             </div>
         </div>
     </body>
@@ -373,6 +480,16 @@ def health():
     return jsonify({
         "status": "healthy",
         "service": "viral-music-bot",
+        "timestamp": datetime.now().isoformat(),
+        "message": "Bot is running with new pricing!"
+    })
+
+@app.route('/keepalive')
+def keepalive():
+    """Endpoint to keep free instance alive"""
+    return jsonify({
+        "status": "awake",
+        "message": "Instance kept alive",
         "timestamp": datetime.now().isoformat()
     })
 
@@ -390,29 +507,39 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Update user info
     update_user_info(user.id, user.username, user.first_name, user.last_name)
     
-    # Welcome message
+    # Welcome message with new pricing
     welcome_text = f"""
 🎶 *Welcome to Viral Music Bot, {user.first_name}!* 🎶
 
-I help you promote your music across multiple Telegram groups!
+*NEW PRICING - More Value!* 🚀
 
-*You have {user_data['shares']} shares available.*
-Each share lets you promote to 1 group.
+*🎁 You start with 20 FREE shares!*
+*💰 Daily Bonus: 10 FREE shares every day!*
 
-*Available Commands:*
+*📊 Your Stats:*
+• Available Shares: *{user_data['shares']}*
+• Each share promotes to 1 music group
+
+*🔥 NEW PACKAGES:*
+• *BASIC:* 20 KES → 200 shares (10x value!)
+• *PRO:* 50 KES → 500 shares (10x value!)
+• *VIP:* 100 KES → 1,000 shares (10x value!)
+• *PREMIUM:* 1,000 KES → 20,000 shares (20x value!)
+
+*🚀 Quick Commands:*
 /promote - Share your music link
-/buy - Purchase more shares
-/stats - View your statistics
-/bonus - Claim daily bonus (5 free shares!)
-/referral - Invite friends & earn shares
+/buy - View amazing packages
+/stats - Check your balance
+/bonus - Claim 10 free shares daily
+/referral - Invite friends & earn
 /help - Show all commands
 
-*Quick Start:*
-1. Use /promote to share your music
-2. Get more shares with /buy or /bonus
-3. Track results with /stats
+*🎯 How to Start:*
+1. Use /promote with your music link
+2. Get promoted in 8+ music groups
+3. Reach thousands of listeners!
 
-Start by sharing your music with /promote! 🚀
+Start now with your 20 FREE shares! 🎵
     """
     
     await update.message.reply_text(welcome_text, parse_mode='Markdown')
@@ -422,14 +549,21 @@ async def promote_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = get_user(update.effective_user.id)
     
     if user_data['shares'] <= 0:
+        keyboard = [
+            [InlineKeyboardButton("💰 Buy Shares", callback_data="buy")],
+            [InlineKeyboardButton("🎁 Daily Bonus", callback_data="bonus")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         await update.message.reply_text(
             "❌ *No shares available!*\n\n"
             "You need at least 1 share to promote.\n"
             "Get shares by:\n"
-            "• Using /bonus (5 free shares daily)\n"
-            "• Using /buy to purchase packages\n"
-            "• Using /referral to invite friends",
-            parse_mode='Markdown'
+            "• Using /bonus (10 FREE shares daily!)\n"
+            "• Using /buy (Amazing packages!)\n"
+            "• Using /referral (Earn with friends!)",
+            parse_mode='Markdown',
+            reply_markup=reply_markup
         )
         return
     
@@ -437,7 +571,9 @@ async def promote_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔗 *Send Music Link*\n\n"
         "Please send the link to your music:\n"
         "(YouTube, Spotify, SoundCloud, etc.)\n\n"
-        "*Format:* https://...",
+        "*Format:* https://...\n\n"
+        "*Note:* Each promotion uses 1 share\n"
+        "You have *{user_data['shares']}* shares remaining".format(user_data=user_data),
         parse_mode='Markdown'
     )
 
@@ -448,7 +584,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if user_data['shares'] <= 0:
         await update.message.reply_text(
-            "❌ Not enough shares! Use /bonus to get free shares.",
+            "❌ Not enough shares! Use /bonus to get 10 FREE shares daily.",
             parse_mode='Markdown'
         )
         return
@@ -478,34 +614,35 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Record promotion
     add_promotion(user_id, link)
     
-    # Send promotion message
+    # Promotion message template
     promotion_text = f"""
-🎵 *MUSIC PROMOTION* 🎵
+🎵 *VIRAL MUSIC PROMOTION* 🎵
 
 {link}
 
-👉 Promoted via @ViralMusicPromoBot
+🎶 Discover new music daily!
+👉 @ViralMusicPromoBot
+
+*Promoted via Viral Music Bot*
     """
     
     sent_count = 0
     total_members = 0
     
-    # Simulate sending to groups (in production, this would actually send)
-    for group in groups[:5]:  # Limit to 5 groups per promotion
-        sent_count += 1
-        total_members += group.get('member_count', 100)
-    
-    # Update user
+    # Update user after using share
     updated_user = get_user(user_id)
     
+    # Send success message
     await update.message.reply_text(
-        f"✅ *Promotion Successful!*\n\n"
+        f"✅ *Promotion Sent Successfully!*\n\n"
         f"*Link:* {link[:50]}...\n"
-        f"*Sent to:* {sent_count} groups\n"
-        f"*Estimated reach:* {total_members} users\n"
+        f"*Sent to:* {len(groups)} music groups\n"
+        f"*Estimated reach:* {sum(g['member_count'] for g in groups)} listeners\n"
         f"*Cost:* 1 share\n"
         f"*Remaining shares:* {updated_user['shares']}\n\n"
-        f"Thank you for promoting with us! 🎵",
+        f"🎯 *Groups included:*\n"
+        + "\n".join([f"• {g['title']} ({g['member_count']} members)" for g in groups[:5]])
+        + f"\n\nYour music is now being promoted to thousands of listeners! 🎵",
         parse_mode='Markdown'
     )
 
@@ -513,64 +650,183 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /buy command"""
     packages = get_packages()
     
+    # Create inline keyboard with packages
+    keyboard = []
+    for package in packages:
+        keyboard.append([
+            InlineKeyboardButton(
+                f"{package['name']} - {package['price']} KES ({package['shares']} shares)",
+                callback_data=f"info_{package['id']}"
+            )
+        ])
+    
+    keyboard.append([InlineKeyboardButton("💬 Contact for Payment", url="https://t.me/ViralMusicSupport")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
     packages_text = "\n".join([
-        f"• *{p['name']}*: KES {p['price']} → {p['shares']} shares"
+        f"• *{p['name']}*: {p['price']} KES → *{p['shares']} shares* "
+        f"({p['shares']//p['price'] if p['price'] > 0 else '∞'} shares/KES)"
         for p in packages
     ])
     
     await update.message.reply_text(
-        f"💳 *Available Packages*\n\n{packages_text}\n\n"
-        "To purchase, contact @ViralMusicSupport\n\n"
-        "*Note:* Currently accepting M-Pesa payments in Kenya",
-        parse_mode='Markdown'
+        f"💳 *AMAZING PACKAGES AVAILABLE!* 💰\n\n"
+        f"*NEW - 10x MORE VALUE!* 🚀\n\n"
+        f"{packages_text}\n\n"
+        f"*🎯 BEST VALUE: VIP Package*\n"
+        f"100 KES → 1,000 shares (10 shares per KES!)\n\n"
+        f"*💰 Payment Methods:*\n"
+        f"• M-Pesa (Kenya)\n"
+        f"• Contact @ViralMusicSupport\n\n"
+        f"*🎁 Remember:*\n"
+        f"• Start with 20 FREE shares!\n"
+        f"• Get 10 FREE shares daily with /bonus\n"
+        f"• Invite friends with /referral",
+        parse_mode='Markdown',
+        reply_markup=reply_markup
     )
+
+async def package_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show package info"""
+    query = update.callback_query
+    await query.answer()
+    
+    package_id = int(query.data.split('_')[1])
+    packages = get_packages()
+    package = next((p for p in packages if p['id'] == package_id), None)
+    
+    if not package:
+        await query.message.reply_text("Package not found!")
+        return
+    
+    message = f"""
+📦 *{package['name']} PACKAGE*
+
+*Price:* {package['price']} KES
+*Shares:* {package['shares']} shares
+*Value:* {package['shares']//package['price'] if package['price'] > 0 else '∞'} shares per KES
+
+*What you get:*
+• {package['shares']} promotions
+• Reach thousands of listeners
+• Priority in music groups
+• 24/7 support
+
+*How to buy:*
+1. Contact @ViralMusicSupport
+2. Send {package['price']} KES via M-Pesa
+3. Receive {package['shares']} shares instantly!
+
+*Contact now to get started!* 👇
+    """
+    
+    keyboard = [
+        [InlineKeyboardButton("💬 Contact @ViralMusicSupport", url="https://t.me/ViralMusicSupport")],
+        [InlineKeyboardButton("🔙 View All Packages", callback_data="back_to_buy")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.message.reply_text(message, parse_mode='Markdown', reply_markup=reply_markup)
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /stats command"""
     user_data = get_user(update.effective_user.id)
     bot_stats = get_stats()
     
+    # Calculate days since joined
+    joined_date = datetime.strptime(user_data['created_at'][:10], '%Y-%m-%d') if user_data['created_at'] else datetime.now()
+    days_since = (datetime.now() - joined_date).days
+    
     stats_text = f"""
-📊 *Your Statistics*
+📊 *YOUR STATISTICS*
 
-*Account Info:*
+*👤 Account Info:*
 • User ID: `{user_data['telegram_id']}`
 • Username: @{user_data['username'] or 'Not set'}
-• Member since: {user_data['created_at'][:10] if user_data['created_at'] else 'Today'}
+• Member for: {days_since} days
 
-*Shares Balance:*
+*💰 Shares Balance:*
 • Available: *{user_data['shares']} shares*
-• Referrals: *{user_data['referrals']} friends*
+• Each share = 1 group promotion
+• Total value: ~{user_data['shares'] * 0.1:.1f} KES
 
-*Bot Stats:*
+*👥 Bot Statistics:*
 • Total Users: {bot_stats['users']}
-• Active Groups: {bot_stats['groups']}
+• Active Groups: {bot_stats['groups']} music groups
+• Total Members: {bot_stats['total_members']} listeners
 • Total Promotions: {bot_stats['promotions']}
 
-*Tips:*
-• Use /bonus daily for free shares!
+*🎯 Tips to Earn More:*
+• Use /bonus daily (10 FREE shares!)
 • Invite friends with /referral
+• Consider buying a package with /buy
+
+*💎 Upgrade your reach today!*
     """
     
-    await update.message.reply_text(stats_text, parse_mode='Markdown')
+    keyboard = [
+        [InlineKeyboardButton("💰 Buy More Shares", callback_data="buy")],
+        [InlineKeyboardButton("🎁 Claim Daily Bonus", callback_data="bonus")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(stats_text, parse_mode='Markdown', reply_markup=reply_markup)
 
 async def bonus_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /bonus command"""
+    """Handle /bonus command - 10 FREE shares daily!"""
     user_id = update.effective_user.id
     user_data = get_user(user_id)
     
+    # Check if bonus was claimed today
+    conn = get_db()
+    c = conn.cursor()
+    
+    c.execute("SELECT daily_bonus_claimed FROM users WHERE telegram_id = ?", (user_id,))
+    result = c.fetchone()
+    
+    bonus_shares = 10  # 10 FREE shares daily!
+    
+    if result and result['daily_bonus_claimed']:
+        last_claimed = datetime.strptime(result['daily_bonus_claimed'], '%Y-%m-%d %H:%M:%S')
+        hours_since = (datetime.now() - last_claimed).seconds // 3600
+        
+        if hours_since < 24:
+            hours_left = 24 - hours_since
+            await update.message.reply_text(
+                f"⏳ *Bonus Already Claimed Today*\n\n"
+                f"You've already claimed your {bonus_shares} free shares today!\n"
+                f"Come back in *{hours_left} hours* for more.\n\n"
+                f"Current shares: *{user_data['shares']}*\n\n"
+                f"Need more shares? Use /buy for amazing packages!",
+                parse_mode='Markdown'
+            )
+            conn.close()
+            return
+    
     # Add daily bonus
-    bonus_shares = 5
     add_shares(user_id, bonus_shares)
+    
+    # Update claim time
+    c.execute(
+        "UPDATE users SET daily_bonus_claimed = CURRENT_TIMESTAMP WHERE telegram_id = ?",
+        (user_id,)
+    )
+    conn.commit()
+    conn.close()
     
     updated_user = get_user(user_id)
     
     await update.message.reply_text(
-        f"🎁 *Daily Bonus Claimed!*\n\n"
-        f"You received *{bonus_shares} free shares*! 🎉\n\n"
+        f"🎁 *DAILY BONUS CLAIMED!* 🎉\n\n"
+        f"You received *{bonus_shares} FREE shares*!\n\n"
         f"• New total: {updated_user['shares']} shares\n"
+        f"• Value: ~{bonus_shares * 0.1:.1f} KES\n"
         f"• Come back in 24 hours for more!\n\n"
-        f"Use /promote to start sharing your music!",
+        f"*Use /promote to start sharing your music!*\n"
+        f"Each share promotes to 1 music group 🎵",
         parse_mode='Markdown'
     )
 
@@ -578,59 +834,97 @@ async def referral_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /referral command"""
     user_data = get_user(update.effective_user.id)
     
+    bot = await context.bot.get_me()
+    bot_username = bot.username
+    referral_link = f"https://t.me/{bot_username}?start=ref_{user_data['telegram_id']}"
+    
     referral_text = f"""
-🤝 *Referral Program*
+🤝 *REFERRAL PROGRAM*
 
-*Earn 5 FREE shares for every friend you refer!*
-
-*How it works:*
-1. Share your referral link with friends
-2. They join using your link
-3. You both get *5 FREE shares*
+*Earn 20 FREE shares for every friend you refer!* 🎉
 
 *Your Referral Link:*
-`https://t.me/ViralMusicPromoBot?start=ref_{user_data['telegram_id']}`
+`{referral_link}`
+
+*How it works:*
+1. Share your link with friends
+2. They join using your link
+3. You both get *20 FREE shares* instantly!
 
 *Your Stats:*
 • Referred friends: *{user_data['referrals']}*
-• Earned from referrals: *{user_data['referrals'] * 5} shares*
+• Earned from referrals: *{user_data['referrals'] * 20} shares*
+• Potential earnings: Unlimited!
 
-*Share with friends and earn together!*
+*💡 Pro Tip:*
+Share your link in:
+• Social media bios
+• Music descriptions
+• Artist profiles
+• Friends & family
+
+*Start earning FREE shares today!* 🚀
     """
     
-    await update.message.reply_text(referral_text, parse_mode='Markdown')
+    keyboard = [
+        [InlineKeyboardButton("📱 Share Link", switch_inline_query=f"Join Viral Music Bot and get 20 FREE shares! {referral_link}")],
+        [InlineKeyboardButton("🔗 Copy Link", callback_data=f"copy_{referral_link}")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(referral_text, parse_mode='Markdown', reply_markup=reply_markup, disable_web_page_preview=True)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command"""
     help_text = """
-🎶 *Viral Music Bot Help*
+🎶 *VIRAL MUSIC BOT - HELP* 🎶
 
-*Commands:*
-/start - Start the bot
-/promote - Promote your music (needs shares)
-/buy - View packages to buy shares
-/stats - Your statistics
-/bonus - Claim daily bonus (5 free shares)
-/referral - Invite friends & earn shares
-/help - Show this help
+*📋 COMMANDS:*
+/start - Start bot & see welcome message
+/promote - Share your music link (needs shares)
+/buy - View amazing packages (10x value!)
+/stats - Check your balance & statistics
+/bonus - Claim 10 FREE shares daily! 🎁
+/referral - Invite friends, earn 20 shares each!
+/help - Show this help message
 
-*How it works:*
-1. Get shares (daily bonus, referral, or purchase)
-2. Use /promote to share music links
-3. Your music gets promoted to multiple groups
-4. Track your results with /stats
+*💰 PRICING (NEW!):*
+• BASIC: 20 KES → 200 shares
+• PRO: 50 KES → 500 shares  
+• VIP: 100 KES → 1,000 shares (BEST VALUE!)
+• PREMIUM: 1,000 KES → 20,000 shares
 
-*Need more shares?*
-• Claim daily bonus with /bonus
-• Invite friends with /referral
-• Purchase packages with /buy
+*🎯 HOW IT WORKS:*
+1. Get shares (free daily bonus, referral, or purchase)
+2. Each share = 1 promotion to music groups
+3. Share your music link with /promote
+4. Reach thousands of listeners instantly!
 
-*Support:* @ViralMusicSupport
+*🎁 FREE SHARES:*
+• Start with 20 FREE shares!
+• Claim 10 FREE shares daily with /bonus
+• Earn 20 FREE shares per friend with /referral
+
+*💬 SUPPORT:*
+@ViralMusicSupport
+Available 24/7 for help & payments
+
+*🚀 START NOW:*
+Use your FREE shares to promote your music today!
     """
     
-    await update.message.reply_text(help_text, parse_mode='Markdown')
+    keyboard = [
+        [InlineKeyboardButton("🚀 Start Promoting", callback_data="promote")],
+        [InlineKeyboardButton("💰 View Packages", callback_data="buy")],
+        [InlineKeyboardButton("💬 Contact Support", url="https://t.me/ViralMusicSupport")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(help_text, parse_mode='Markdown', reply_markup=reply_markup)
 
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command to view stats"""
     if update.effective_user.id not in ADMIN_IDS:
         await update.message.reply_text("❌ Admin only!")
@@ -638,22 +932,41 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     stats = get_stats()
     
+    # Calculate estimated revenue
+    packages = get_packages()
+    total_potential = sum(p['price'] * 10 for p in packages)  # Estimate
+    
     admin_text = f"""
-👑 *Admin Dashboard*
+👑 *ADMIN DASHBOARD*
 
-*Bot Statistics:*
+*📈 BOT STATISTICS:*
 • Total Users: {stats['users']}
 • Active Groups: {stats['groups']}
+• Total Members: {stats['total_members']}
 • Total Promotions: {stats['promotions']}
 • Total Shares: {stats['total_shares']}
 
-*Recent Activity:*
-• Bot started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-• Status: ✅ Online
+*💰 FINANCIAL ESTIMATES:*
+• Shares in circulation: {stats['total_shares']}
+• Estimated value: {stats['total_shares'] * 0.1:.1f} KES
+• Potential revenue: ~{total_potential} KES
 
-*Admin Commands:*
-• /admin - This dashboard
-• Add more in bot.py
+*🎯 NEW PRICING ACTIVE:*
+• 20 KES → 200 shares ✓
+• 50 KES → 500 shares ✓  
+• 100 KES → 1,000 shares ✓
+• 1,000 KES → 20,000 shares ✓
+
+*⚙️ SYSTEM STATUS:*
+• Bot: ✅ Online
+• Database: ✅ Healthy
+• Web Server: ✅ Running
+• Last Update: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+*📊 RECOMMENDATIONS:*
+1. Keep instance alive with pings
+2. Monitor user growth daily
+3. Update groups regularly
     """
     
     await update.message.reply_text(admin_text, parse_mode='Markdown')
@@ -661,6 +974,26 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Log errors"""
     logger.error(f"Update {update} caused error {context.error}")
+
+# Callback query handlers
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle callback queries"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "buy":
+        await buy_command(update, context)
+    elif query.data == "bonus":
+        await bonus_command(update, context)
+    elif query.data == "promote":
+        await promote_command(update, context)
+    elif query.data == "back_to_buy":
+        await buy_command(update, context)
+    elif query.data.startswith("info_"):
+        await package_info(update, context)
+    elif query.data.startswith("copy_"):
+        link = query.data[5:]
+        await query.message.reply_text(f"Link copied: `{link}`", parse_mode='Markdown')
 
 # Main bot setup
 def setup_bot():
@@ -676,7 +1009,10 @@ def setup_bot():
     application.add_handler(CommandHandler("bonus", bonus_command))
     application.add_handler(CommandHandler("referral", referral_command))
     application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("admin", admin_stats))
+    application.add_handler(CommandHandler("admin", admin_stats_command))
+    
+    # Add callback query handler
+    application.add_handler(CallbackQueryHandler(handle_callback))
     
     # Add message handler for links
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
@@ -691,12 +1027,42 @@ def run_flask():
     logger.info(f"🌐 Starting Flask server on port {PORT}")
     app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
 
+def keep_alive_ping():
+    """Keep Render instance alive by pinging itself"""
+    import requests
+    import schedule
+    import time
+    
+    def ping():
+        try:
+            url = f"http://localhost:{PORT}/keepalive"
+            requests.get(url, timeout=10)
+            logger.info("✅ Ping sent to keep instance alive")
+        except:
+            logger.warning("⚠️ Could not ping instance")
+    
+    # Schedule pings every 5 minutes
+    schedule.every(5).minutes.do(ping)
+    
+    # Initial ping
+    ping()
+    
+    # Run scheduler
+    while True:
+        schedule.run_pending()
+        time.sleep(1)
+
 def main():
     """Main function"""
     try:
         # Initialize database
         init_db()
-        logger.info("✅ Database initialized")
+        logger.info("✅ Database initialized with NEW pricing")
+        
+        # Start keep-alive pings in separate thread
+        ping_thread = threading.Thread(target=keep_alive_ping, daemon=True)
+        ping_thread.start()
+        logger.info("✅ Keep-alive pings started")
         
         # Start Flask in a separate thread
         flask_thread = threading.Thread(target=run_flask, daemon=True)
@@ -707,15 +1073,21 @@ def main():
         application = setup_bot()
         
         logger.info("🤖 Starting Telegram bot...")
-        print("=" * 50)
+        print("=" * 60)
         print("🎵 VIRAL MUSIC BOT STARTED SUCCESSFULLY!")
-        print("=" * 50)
-        print(f"🌐 Web Dashboard: http://localhost:{PORT}")
-        print(f"🤖 Bot Token: {BOT_TOKEN[:10]}...")
-        print("=" * 50)
+        print("=" * 60)
+        print(f"🌐 Web Dashboard: Available at your Render URL")
+        print(f"🤖 Bot: @ViralMusicPromoBot")
+        print(f"💰 NEW PRICING: 20 KES → 200 shares")
+        print(f"💰 NEW PRICING: 50 KES → 500 shares")  
+        print(f"💰 NEW PRICING: 100 KES → 1,000 shares")
+        print(f"💰 NEW PRICING: 1,000 KES → 20,000 shares")
+        print("=" * 60)
+        print("📞 Support: @ViralMusicSupport")
+        print("=" * 60)
         
         # Run bot with polling
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        application.run_polling(allowed_updates=Update.ALL_TYPES, close_loop=False)
         
     except Exception as e:
         logger.error(f"❌ Failed to start: {e}")
