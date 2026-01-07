@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: viral-music-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: BOT_TOKEN
+        value: 8423872767:AAHNcXP62I8vC96E8pP8d4kX2QQ4YjV8Yd0
+      - key: PORT
+        value: 10000
+      - key: ADMIN_IDS
+        value: "8038790386"  # Your Telegram ID
+    healthCheckPath: /health
+    autoDeploy: true
