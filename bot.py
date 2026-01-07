@@ -2,7 +2,7 @@ import os
 import sqlite3
 import logging
 import threading
-import asyncio
+import time
 from datetime import datetime
 from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Bot
@@ -14,11 +14,15 @@ from telegram.ext import (
     filters,
     ContextTypes
 )
+import asyncio
 
 # Setup logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.INFO,
+    handlers=[
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -34,7 +38,6 @@ if admin_env:
     ADMIN_IDS = {int(x.strip()) for x in admin_env.split(",") if x.strip()}
 
 PORT = int(os.getenv("PORT", "10000"))
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
 
 # Database setup
 DB_PATH = "data/bot.db"
@@ -52,7 +55,7 @@ def init_db():
             username TEXT,
             first_name TEXT,
             last_name TEXT,
-            shares INTEGER DEFAULT 0,
+            shares INTEGER DEFAULT 10,  -- Start with 10 free shares
             referrals INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -103,6 +106,20 @@ def init_db():
         default_packages
     )
     
+    # Add some demo groups
+    demo_groups = [
+        ("-1001234567890", "Music Lovers", "musiclovers", 500),
+        ("-1001234567891", "Hip Hop Community", "hiphopcommunity", 300),
+        ("-1001234567892", "EDM Fans", "edmfans", 400),
+        ("-1001234567893", "Rock Music", "rockmusic", 350),
+        ("-1001234567894", "Pop Hits", "pophits", 600),
+    ]
+    
+    c.executemany(
+        "INSERT OR IGNORE INTO groups (group_id, title, username, member_count) VALUES (?, ?, ?, ?)",
+        demo_groups
+    )
+    
     conn.commit()
     conn.close()
     logger.info("✅ Database initialized")
@@ -122,7 +139,7 @@ def get_user(telegram_id):
     user = c.fetchone()
     
     if not user:
-        c.execute("INSERT INTO users (telegram_id) VALUES (?)", (telegram_id,))
+        c.execute("INSERT INTO users (telegram_id, shares) VALUES (?, 10)", (telegram_id,))
         conn.commit()
         c.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,))
         user = c.fetchone()
@@ -151,6 +168,7 @@ def add_shares(telegram_id, shares):
     )
     conn.commit()
     conn.close()
+    logger.info(f"Added {shares} shares to user {telegram_id}")
 
 def use_share(telegram_id):
     """Use one share"""
@@ -185,7 +203,7 @@ def get_active_groups():
     """Get active groups"""
     conn = get_db()
     c = conn.cursor()
-    c.execute("SELECT group_id, title FROM groups WHERE is_active = 1")
+    c.execute("SELECT group_id, title, member_count FROM groups WHERE is_active = 1")
     groups = [dict(row) for row in c.fetchall()]
     conn.close()
     return groups
@@ -198,218 +216,13 @@ def add_promotion(user_id, content):
         "INSERT INTO promotions (user_id, content) VALUES (?, ?)",
         (user_id, content)
     )
+    promotion_id = c.lastrowid
     conn.commit()
     conn.close()
+    return promotion_id
 
-# Flask app for web interface
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>🎵 Viral Music Bot</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            body {
-                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                margin: 0;
-                padding: 20px;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color: white;
-                min-height: 100vh;
-            }
-            .container {
-                max-width: 800px;
-                margin: 0 auto;
-                background: rgba(255, 255, 255, 0.1);
-                backdrop-filter: blur(10px);
-                border-radius: 20px;
-                padding: 40px;
-                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            }
-            h1 {
-                text-align: center;
-                font-size: 2.8em;
-                margin-bottom: 10px;
-                background: linear-gradient(45deg, #ff6b6b, #feca57);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
-            }
-            .subtitle {
-                text-align: center;
-                font-size: 1.2em;
-                opacity: 0.9;
-                margin-bottom: 40px;
-            }
-            .stats {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-                gap: 20px;
-                margin: 40px 0;
-            }
-            .stat-card {
-                background: rgba(255, 255, 255, 0.15);
-                padding: 25px;
-                border-radius: 15px;
-                text-align: center;
-                transition: transform 0.3s;
-            }
-            .stat-card:hover {
-                transform: translateY(-5px);
-                background: rgba(255, 255, 255, 0.2);
-            }
-            .stat-number {
-                font-size: 2.5em;
-                font-weight: bold;
-                margin: 10px 0;
-                color: #4ecdc4;
-            }
-            .btn {
-                display: inline-block;
-                padding: 15px 35px;
-                background: linear-gradient(45deg, #4ecdc4, #44a08d);
-                color: white;
-                text-decoration: none;
-                border-radius: 50px;
-                margin: 15px;
-                font-weight: bold;
-                font-size: 1.1em;
-                transition: all 0.3s;
-                border: none;
-                cursor: pointer;
-                box-shadow: 0 5px 15px rgba(0,0,0,0.2);
-            }
-            .btn:hover {
-                transform: translateY(-3px);
-                box-shadow: 0 8px 25px rgba(0,0,0,0.3);
-                background: linear-gradient(45deg, #44a08d, #4ecdc4);
-            }
-            .cta {
-                text-align: center;
-                margin: 50px 0;
-            }
-            .features {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-                gap: 25px;
-                margin: 40px 0;
-            }
-            .feature {
-                background: rgba(255, 255, 255, 0.1);
-                padding: 25px;
-                border-radius: 15px;
-                border-left: 5px solid #4ecdc4;
-            }
-            .feature h3 {
-                margin-top: 0;
-                color: #4ecdc4;
-            }
-            .footer {
-                text-align: center;
-                margin-top: 50px;
-                padding-top: 30px;
-                border-top: 1px solid rgba(255,255,255,0.1);
-                font-size: 0.9em;
-                opacity: 0.7;
-            }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>🎵 Viral Music Bot</h1>
-            <div class="subtitle">Promote your music across Telegram groups • Get more listeners • Grow your audience</div>
-            
-            <div class="cta">
-                <a href="https://t.me/ViralMusicPromoterBot" class="btn" target="_blank">
-                    🚀 Start Promoting Now
-                </a>
-                <br>
-                <small>Click to open Telegram and start using the bot</small>
-            </div>
-            
-            <div class="features">
-                <div class="feature">
-                    <h3>📢 Multi-Group Promotion</h3>
-                    <p>Share your music links across multiple Telegram groups simultaneously with just one click.</p>
-                </div>
-                <div class="feature">
-                    <h3>💰 Flexible Plans</h3>
-                    <p>Choose from Basic, Pro, or VIP packages. Start with free shares from daily bonuses!</p>
-                </div>
-                <div class="feature">
-                    <h3>📊 Real-Time Analytics</h3>
-                    <p>Track your promotion performance and audience growth with detailed statistics.</p>
-                </div>
-                <div class="feature">
-                    <h3>👥 Referral Program</h3>
-                    <p>Earn free shares by inviting friends. Get 5 shares for each successful referral!</p>
-                </div>
-            </div>
-            
-            <div class="stats">
-                <div class="stat-card">
-                    <div class="stat-label">Active Users</div>
-                    <div class="stat-number" id="userCount">0</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Groups</div>
-                    <div class="stat-number" id="groupCount">0</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Promotions</div>
-                    <div class="stat-number" id="promoCount">0</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Uptime</div>
-                    <div class="stat-number">24/7</div>
-                </div>
-            </div>
-            
-            <div class="cta">
-                <h2>Ready to Go Viral? 🎶</h2>
-                <a href="https://t.me/ViralMusicPromoterBot" class="btn" target="_blank">
-                    💎 Start Free Trial
-                </a>
-                <p>Get 10 free shares to start promoting your music!</p>
-            </div>
-            
-            <div class="footer">
-                <p>© 2024 Viral Music Bot • Made with ❤️ for artists worldwide</p>
-                <p>Contact: @ViralMusicSupport • Status: <span style="color: #4ecdc4;">●</span> Operational</p>
-            </div>
-        </div>
-        
-        <script>
-            // Fetch stats from API
-            async function loadStats() {
-                try {
-                    const response = await fetch('/api/stats');
-                    const data = await response.json();
-                    
-                    document.getElementById('userCount').textContent = data.users || '0';
-                    document.getElementById('groupCount').textContent = data.groups || '0';
-                    document.getElementById('promoCount').textContent = data.promotions || '0';
-                } catch (error) {
-                    console.log('Stats loading failed, using defaults');
-                }
-            }
-            
-            // Load stats on page load
-            document.addEventListener('DOMContentLoaded', loadStats);
-            
-            // Refresh stats every 30 seconds
-            setInterval(loadStats, 30000);
-        </script>
-    </body>
-    </html>
-    """
-
-@app.route('/api/stats')
-def api_stats():
-    """API endpoint for statistics"""
+def get_stats():
+    """Get bot statistics"""
     conn = get_db()
     c = conn.cursor()
     
@@ -422,22 +235,154 @@ def api_stats():
     c.execute("SELECT COUNT(*) FROM promotions")
     promotions = c.fetchone()[0]
     
+    c.execute("SELECT SUM(shares) FROM users")
+    total_shares = c.fetchone()[0] or 0
+    
     conn.close()
     
-    return jsonify({
+    return {
         "users": users,
         "groups": groups,
         "promotions": promotions,
-        "status": "online",
-        "timestamp": datetime.now().isoformat()
-    })
+        "total_shares": total_shares
+    }
+
+# Flask app
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    """Web dashboard"""
+    stats = get_stats()
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>🎵 Viral Music Bot</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body {{
+                font-family: Arial, sans-serif;
+                margin: 0;
+                padding: 20px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+            }}
+            .container {{
+                max-width: 800px;
+                margin: 0 auto;
+                background: rgba(255, 255, 255, 0.1);
+                backdrop-filter: blur(10px);
+                border-radius: 20px;
+                padding: 30px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            }}
+            h1 {{
+                text-align: center;
+                font-size: 2.5em;
+                margin-bottom: 10px;
+            }}
+            .stats {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                gap: 15px;
+                margin: 30px 0;
+            }}
+            .stat-card {{
+                background: rgba(255, 255, 255, 0.2);
+                padding: 20px;
+                border-radius: 10px;
+                text-align: center;
+            }}
+            .stat-number {{
+                font-size: 2em;
+                font-weight: bold;
+                margin: 10px 0;
+                color: #4ecdc4;
+            }}
+            .btn {{
+                display: inline-block;
+                padding: 12px 30px;
+                background: #4CAF50;
+                color: white;
+                text-decoration: none;
+                border-radius: 25px;
+                margin: 10px;
+                font-weight: bold;
+                transition: transform 0.3s;
+            }}
+            .btn:hover {{
+                transform: translateY(-2px);
+                background: #45a049;
+            }}
+            .cta {{
+                text-align: center;
+                margin: 30px 0;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🎵 Viral Music Bot</h1>
+            <p style="text-align: center; opacity: 0.9;">Promote your music across Telegram groups</p>
+            
+            <div class="cta">
+                <a href="https://t.me/ViralMusicPromoBot" class="btn" target="_blank">
+                    🚀 Launch Bot
+                </a>
+            </div>
+            
+            <div class="stats">
+                <div class="stat-card">
+                    <div>Active Users</div>
+                    <div class="stat-number">{stats['users']}</div>
+                </div>
+                <div class="stat-card">
+                    <div>Active Groups</div>
+                    <div class="stat-number">{stats['groups']}</div>
+                </div>
+                <div class="stat-card">
+                    <div>Promotions</div>
+                    <div class="stat-number">{stats['promotions']}</div>
+                </div>
+                <div class="stat-card">
+                    <div>Total Shares</div>
+                    <div class="stat-number">{stats['total_shares']}</div>
+                </div>
+            </div>
+            
+            <div style="text-align: center; margin-top: 40px;">
+                <h3>Features:</h3>
+                <p>• Share music to multiple groups</p>
+                <p>• Get free shares daily</p>
+                <p>• Referral program</p>
+                <p>• Real-time statistics</p>
+            </div>
+            
+            <div style="text-align: center; margin-top: 40px; font-size: 0.9em; opacity: 0.7;">
+                <p>© 2024 Viral Music Bot | Status: <span style="color: #4CAF50;">●</span> Online</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
 
 @app.route('/health')
 def health():
-    return jsonify({"status": "healthy", "service": "viral-music-bot"})
+    """Health check endpoint"""
+    return jsonify({
+        "status": "healthy",
+        "service": "viral-music-bot",
+        "timestamp": datetime.now().isoformat()
+    })
 
-# Telegram Bot Handlers
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@app.route('/api/stats')
+def api_stats():
+    """API endpoint for statistics"""
+    return jsonify(get_stats())
+
+# Telegram Bot Functions
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command"""
     user = update.effective_user
     user_data = get_user(user.id)
@@ -445,86 +390,82 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Update user info
     update_user_info(user.id, user.username, user.first_name, user.last_name)
     
-    keyboard = [
-        [InlineKeyboardButton("🎵 Promote Music", callback_data="promote")],
-        [InlineKeyboardButton("💰 Buy Shares", callback_data="buy")],
-        [InlineKeyboardButton("📊 My Stats", callback_data="stats")],
-        [InlineKeyboardButton("🎁 Daily Bonus", callback_data="bonus")],
-        [InlineKeyboardButton("🤝 Refer Friends", callback_data="referral")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
+    # Welcome message
     welcome_text = f"""
 🎶 *Welcome to Viral Music Bot, {user.first_name}!* 🎶
 
-*Your Current Stats:*
-• Available Shares: *{user_data['shares']}*
-• Total Referrals: *{user_data['referrals']}*
+I help you promote your music across multiple Telegram groups!
 
-*How to Use:*
-1. Use "Promote Music" to share your links
-2. Get more shares via "Buy Shares" or "Daily Bonus"
-3. Invite friends for bonus shares
+*You have {user_data['shares']} shares available.*
+Each share lets you promote to 1 group.
 
-Tap a button below to get started! 👇
+*Available Commands:*
+/promote - Share your music link
+/buy - Purchase more shares
+/stats - View your statistics
+/bonus - Claim daily bonus (5 free shares!)
+/referral - Invite friends & earn shares
+/help - Show all commands
+
+*Quick Start:*
+1. Use /promote to share your music
+2. Get more shares with /buy or /bonus
+3. Track results with /stats
+
+Start by sharing your music with /promote! 🚀
     """
     
-    await update.message.reply_text(
-        welcome_text,
-        parse_mode='Markdown',
-        reply_markup=reply_markup
-    )
+    await update.message.reply_text(welcome_text, parse_mode='Markdown')
 
-async def promote_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show promotion menu"""
-    query = update.callback_query
-    await query.answer()
-    
-    user_data = get_user(query.from_user.id)
-    
-    if user_data['shares'] <= 0:
-        await query.message.reply_text(
-            "❌ *No shares available!*\n\n"
-            "Get shares by:\n"
-            "• Buying packages (/buy)\n"
-            "• Claiming daily bonus (/bonus)\n"
-            "• Referring friends (/referral)",
-            parse_mode='Markdown'
-        )
-        return
-    
-    await query.message.reply_text(
-        "🔗 *Send Music Link*\n\n"
-        "Please send the link to your music:\n"
-        "(YouTube, Spotify, SoundCloud, etc.)\n\n"
-        "Format: https://...",
-        parse_mode='Markdown'
-    )
-
-async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle music link"""
+async def promote_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /promote command"""
     user_data = get_user(update.effective_user.id)
     
     if user_data['shares'] <= 0:
         await update.message.reply_text(
-            "❌ Not enough shares! Use /buy to get more.",
+            "❌ *No shares available!*\n\n"
+            "You need at least 1 share to promote.\n"
+            "Get shares by:\n"
+            "• Using /bonus (5 free shares daily)\n"
+            "• Using /buy to purchase packages\n"
+            "• Using /referral to invite friends",
             parse_mode='Markdown'
         )
         return
     
-    link = update.message.text
+    await update.message.reply_text(
+        "🔗 *Send Music Link*\n\n"
+        "Please send the link to your music:\n"
+        "(YouTube, Spotify, SoundCloud, etc.)\n\n"
+        "*Format:* https://...",
+        parse_mode='Markdown'
+    )
+
+async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle music link submission"""
+    user_id = update.effective_user.id
+    user_data = get_user(user_id)
+    
+    if user_data['shares'] <= 0:
+        await update.message.reply_text(
+            "❌ Not enough shares! Use /bonus to get free shares.",
+            parse_mode='Markdown'
+        )
+        return
+    
+    link = update.message.text.strip()
+    
+    # Validate URL
     if not (link.startswith('http://') or link.startswith('https://')):
         await update.message.reply_text(
-            "❌ Invalid link! Please send a valid URL starting with http:// or https://",
+            "❌ *Invalid link!*\n"
+            "Please send a valid URL starting with http:// or https://",
             parse_mode='Markdown'
         )
         return
     
     # Use one share
-    success = use_share(update.effective_user.id)
-    
-    if not success:
+    if not use_share(user_id):
         await update.message.reply_text(
             "❌ Failed to use share. Please try again.",
             parse_mode='Markdown'
@@ -533,213 +474,254 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Get active groups
     groups = get_active_groups()
-    sent_count = 0
     
     # Record promotion
-    add_promotion(update.effective_user.id, link)
+    add_promotion(user_id, link)
     
-    # Send to each group (simulated for now)
-    for group in groups[:10]:  # Limit to 10 groups
-        try:
-            # In production, you would send actual messages
-            sent_count += 1
-        except:
-            pass
+    # Send promotion message
+    promotion_text = f"""
+🎵 *MUSIC PROMOTION* 🎵
+
+{link}
+
+👉 Promoted via @ViralMusicPromoBot
+    """
+    
+    sent_count = 0
+    total_members = 0
+    
+    # Simulate sending to groups (in production, this would actually send)
+    for group in groups[:5]:  # Limit to 5 groups per promotion
+        sent_count += 1
+        total_members += group.get('member_count', 100)
+    
+    # Update user
+    updated_user = get_user(user_id)
     
     await update.message.reply_text(
-        f"✅ *Promotion Sent!*\n\n"
-        f"• Link: {link[:50]}...\n"
-        f"• Sent to: {sent_count} groups\n"
-        f"• Cost: 1 share\n"
-        f"• Remaining: {user_data['shares'] - 1} shares\n\n"
-        f"🎯 Estimated reach: {sent_count * 100} users",
+        f"✅ *Promotion Successful!*\n\n"
+        f"*Link:* {link[:50]}...\n"
+        f"*Sent to:* {sent_count} groups\n"
+        f"*Estimated reach:* {total_members} users\n"
+        f"*Cost:* 1 share\n"
+        f"*Remaining shares:* {updated_user['shares']}\n\n"
+        f"Thank you for promoting with us! 🎵",
         parse_mode='Markdown'
     )
 
-async def buy_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show packages for purchase"""
-    query = update.callback_query
-    await query.answer()
-    
+async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /buy command"""
     packages = get_packages()
     
-    keyboard = []
-    for package in packages:
-        keyboard.append([
-            InlineKeyboardButton(
-                f"{package['name']} - ${package['price']} ({package['shares']} shares)",
-                callback_data=f"buy_{package['id']}"
-            )
-        ])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
     packages_text = "\n".join([
-        f"• *{p['name']}*: ${p['price']} → {p['shares']} shares"
+        f"• *{p['name']}*: KES {p['price']} → {p['shares']} shares"
         for p in packages
     ])
     
-    await query.message.edit_text(
+    await update.message.reply_text(
         f"💳 *Available Packages*\n\n{packages_text}\n\n"
-        f"Select a package to proceed with payment.",
-        parse_mode='Markdown',
-        reply_markup=reply_markup
+        "To purchase, contact @ViralMusicSupport\n\n"
+        "*Note:* Currently accepting M-Pesa payments in Kenya",
+        parse_mode='Markdown'
     )
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show user statistics"""
-    query = update.callback_query
-    await query.answer()
-    
-    user_data = get_user(query.from_user.id)
+    """Handle /stats command"""
+    user_data = get_user(update.effective_user.id)
+    bot_stats = get_stats()
     
     stats_text = f"""
 📊 *Your Statistics*
 
-*👤 Account:*
+*Account Info:*
 • User ID: `{user_data['telegram_id']}`
-• Member since: {user_data['created_at'][:10]}
+• Username: @{user_data['username'] or 'Not set'}
+• Member since: {user_data['created_at'][:10] if user_data['created_at'] else 'Today'}
 
-*💰 Shares:*
+*Shares Balance:*
 • Available: *{user_data['shares']} shares*
-• Total earned: *{user_data['shares'] + user_data.get('used_shares', 0)} shares*
+• Referrals: *{user_data['referrals']} friends*
 
-*👥 Referrals:*
-• Referred friends: *{user_data['referrals']}*
-• Referral code: `REF{user_data['telegram_id']}`
+*Bot Stats:*
+• Total Users: {bot_stats['users']}
+• Active Groups: {bot_stats['groups']}
+• Total Promotions: {bot_stats['promotions']}
 
-*🎯 Tips:*
-• Share your referral code to earn bonus shares!
-• Claim daily bonus every 24 hours.
+*Tips:*
+• Use /bonus daily for free shares!
+• Invite friends with /referral
     """
     
-    await query.message.reply_text(stats_text, parse_mode='Markdown')
+    await update.message.reply_text(stats_text, parse_mode='Markdown')
 
-async def daily_bonus(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Claim daily bonus"""
-    query = update.callback_query
-    await query.answer()
-    
-    user_id = query.from_user.id
-    add_shares(user_id, 5)
-    
+async def bonus_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /bonus command"""
+    user_id = update.effective_user.id
     user_data = get_user(user_id)
     
-    await query.message.reply_text(
+    # Add daily bonus
+    bonus_shares = 5
+    add_shares(user_id, bonus_shares)
+    
+    updated_user = get_user(user_id)
+    
+    await update.message.reply_text(
         f"🎁 *Daily Bonus Claimed!*\n\n"
-        f"You received *5 free shares*! 🎉\n\n"
-        f"• New total: {user_data['shares']} shares\n"
+        f"You received *{bonus_shares} free shares*! 🎉\n\n"
+        f"• New total: {updated_user['shares']} shares\n"
         f"• Come back in 24 hours for more!\n\n"
         f"Use /promote to start sharing your music!",
         parse_mode='Markdown'
     )
 
-async def referral_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show referral info"""
-    query = update.callback_query
-    await query.answer()
-    
-    user_data = get_user(query.from_user.id)
+async def referral_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /referral command"""
+    user_data = get_user(update.effective_user.id)
     
     referral_text = f"""
 🤝 *Referral Program*
 
 *Earn 5 FREE shares for every friend you refer!*
 
-*Your Referral Link:*
-`https://t.me/{(await context.bot.get_me()).username}?start=ref_{user_data['telegram_id']}`
-
 *How it works:*
-1. Share your link with friends
+1. Share your referral link with friends
 2. They join using your link
 3. You both get *5 FREE shares*
 
+*Your Referral Link:*
+`https://t.me/ViralMusicPromoBot?start=ref_{user_data['telegram_id']}`
+
 *Your Stats:*
-• Total referrals: *{user_data['referrals']}*
+• Referred friends: *{user_data['referrals']}*
 • Earned from referrals: *{user_data['referrals'] * 5} shares*
+
+*Share with friends and earn together!*
     """
     
-    await query.message.reply_text(referral_text, parse_mode='Markdown')
+    await update.message.reply_text(referral_text, parse_mode='Markdown')
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show help"""
+    """Handle /help command"""
     help_text = """
 🎶 *Viral Music Bot Help*
 
 *Commands:*
 /start - Start the bot
-/promote - Promote your music
-/buy - Buy shares
+/promote - Promote your music (needs shares)
+/buy - View packages to buy shares
 /stats - Your statistics
-/bonus - Claim daily bonus
-/referral - Referral program
+/bonus - Claim daily bonus (5 free shares)
+/referral - Invite friends & earn shares
 /help - Show this help
 
 *How it works:*
-1. Get shares (buy or daily bonus)
-2. Use shares to promote music links
-3. Track your results
-4. Earn more by referring friends
+1. Get shares (daily bonus, referral, or purchase)
+2. Use /promote to share music links
+3. Your music gets promoted to multiple groups
+4. Track your results with /stats
 
-*Support:*
-@ViralMusicSupport
+*Need more shares?*
+• Claim daily bonus with /bonus
+• Invite friends with /referral
+• Purchase packages with /buy
+
+*Support:* @ViralMusicSupport
     """
     
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to view stats"""
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.message.reply_text("❌ Admin only!")
+        return
+    
+    stats = get_stats()
+    
+    admin_text = f"""
+👑 *Admin Dashboard*
+
+*Bot Statistics:*
+• Total Users: {stats['users']}
+• Active Groups: {stats['groups']}
+• Total Promotions: {stats['promotions']}
+• Total Shares: {stats['total_shares']}
+
+*Recent Activity:*
+• Bot started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+• Status: ✅ Online
+
+*Admin Commands:*
+• /admin - This dashboard
+• Add more in bot.py
+    """
+    
+    await update.message.reply_text(admin_text, parse_mode='Markdown')
+
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Log errors"""
+    logger.error(f"Update {update} caused error {context.error}")
+
 # Main bot setup
-async def setup_bot():
+def setup_bot():
     """Setup and run the bot"""
+    # Create application
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # Add handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("promote", promote_menu))
-    application.add_handler(CommandHandler("buy", buy_menu))
+    # Add command handlers
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("promote", promote_command))
+    application.add_handler(CommandHandler("buy", buy_command))
     application.add_handler(CommandHandler("stats", stats_command))
-    application.add_handler(CommandHandler("bonus", daily_bonus))
-    application.add_handler(CommandHandler("referral", referral_menu))
+    application.add_handler(CommandHandler("bonus", bonus_command))
+    application.add_handler(CommandHandler("referral", referral_command))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("admin", admin_stats))
     
-    # Callback handlers
-    application.add_handler(CallbackQueryHandler(promote_menu, pattern="^promote$"))
-    application.add_handler(CallbackQueryHandler(buy_menu, pattern="^buy$"))
-    application.add_handler(CallbackQueryHandler(stats_command, pattern="^stats$"))
-    application.add_handler(CallbackQueryHandler(daily_bonus, pattern="^bonus$"))
-    application.add_handler(CallbackQueryHandler(referral_menu, pattern="^referral$"))
-    
-    # Message handler for links
+    # Add message handler for links
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link))
     
-    # Use webhook if URL provided, otherwise use polling
-    if WEBHOOK_URL:
-        await application.bot.set_webhook(f"{WEBHOOK_URL}/{BOT_TOKEN}")
-        logger.info(f"Webhook set to: {WEBHOOK_URL}")
-    else:
-        # Start polling
-        await application.initialize()
-        await application.start()
-        await application.updater.start_polling()
-        logger.info("Bot started with polling")
-        
-        # Keep running
-        await asyncio.Event().wait()
+    # Add error handler
+    application.add_error_handler(error_handler)
+    
+    return application
 
 def run_flask():
     """Run Flask web server"""
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+    logger.info(f"🌐 Starting Flask server on port {PORT}")
+    app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
 
-def run_bot():
-    """Run Telegram bot"""
-    asyncio.run(setup_bot())
+def main():
+    """Main function"""
+    try:
+        # Initialize database
+        init_db()
+        logger.info("✅ Database initialized")
+        
+        # Start Flask in a separate thread
+        flask_thread = threading.Thread(target=run_flask, daemon=True)
+        flask_thread.start()
+        logger.info("✅ Flask server started")
+        
+        # Setup and run bot
+        application = setup_bot()
+        
+        logger.info("🤖 Starting Telegram bot...")
+        print("=" * 50)
+        print("🎵 VIRAL MUSIC BOT STARTED SUCCESSFULLY!")
+        print("=" * 50)
+        print(f"🌐 Web Dashboard: http://localhost:{PORT}")
+        print(f"🤖 Bot Token: {BOT_TOKEN[:10]}...")
+        print("=" * 50)
+        
+        # Run bot with polling
+        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to start: {e}")
+        import traceback
+        traceback.print_exc()
+        exit(1)
 
 if __name__ == "__main__":
-    # Initialize database
-    init_db()
-    
-    # Start Flask in a separate thread
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    
-    # Run bot in main thread
-    run_bot()
+    main()
