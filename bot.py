@@ -362,3 +362,20 @@ def main():
 
 if __name__ == "__main__":
     main()
+def run_bot():
+    """Run the Telegram bot in polling mode in its own thread."""
+    try:
+        asyncio.run(start_bot_async())
+    except Exception as e:
+        logging.error(f"❌ Bot failed: {e}")
+        traceback.print_exc()
+
+async def start_bot_async():
+    """Async function to start the bot."""
+    from telegram.ext import Application
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    # Register your handlers here
+    # ...
+    
+    await application.run_polling(allowed_updates=Update.ALL_TYPES)
