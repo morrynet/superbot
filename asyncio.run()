@@ -1,0 +1,16 @@
+def run_bot():
+    """Run the Telegram bot in polling mode."""
+    try:
+        asyncio.run(start_bot())
+    except Exception as e:
+        logging.error(f"❌ Bot failed: {e}")
+        traceback.print_exc()
+
+async def start_bot():
+    """Async function to start the bot."""
+    # Your existing bot setup code
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    # Add your handlers here...
+    
+    await application.run_polling(allowed_updates=Update.ALL_TYPES)
